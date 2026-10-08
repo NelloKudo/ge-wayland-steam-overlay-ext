@@ -12,8 +12,19 @@ Imported from proton-ge-custom commit
 - `layer/` comes from `vklayers/steam-overlay-wayland`
 - `bridge/` comes from `lsteamclient/overlay_bridge`
 
-# to-do
+On top of that, it includes the changes from
+[nanomatters' fork](https://github.com/nanomatters/ge-steam-overlay-wayland),
+ported to the newer GE base.
 
-- makefile (?)
-- import changes from [nanomatters' fork](https://github.com/nanomatters/ge-steam-overlay-wayland)
-- CI (import/test build? idk)
+## Building
+
+```sh
+./build.sh
+```
+
+## Credits
+
+- [GloriousEggroll](https://github.com/GloriousEggroll) for the original
+  Steam overlay layer and bridge in proton-ge-custom
+- Erhan Bilgili for the changes in [nanomatters' fork](https://github.com/nanomatters/ge-steam-overlay-wayland)
+
