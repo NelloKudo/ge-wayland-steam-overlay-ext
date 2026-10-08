@@ -10,7 +10,6 @@ if(NOT X11_Xfixes_FOUND)
     message(FATAL_ERROR "Xfixes is required")
 endif()
 pkg_check_modules(Wayland REQUIRED IMPORTED_TARGET wayland-client wayland-cursor)
-pkg_check_modules(Xkbcommon REQUIRED IMPORTED_TARGET xkbcommon)
 
 find_program(WAYLAND_SCANNER_EXECUTABLE NAMES wayland-scanner)
 if(NOT WAYLAND_SCANNER_EXECUTABLE)
@@ -93,7 +92,6 @@ target_include_directories(lsteamclient_overlay_bridge
 target_link_libraries(lsteamclient_overlay_bridge
     PUBLIC PkgConfig::Wayland
     PRIVATE
-        PkgConfig::Xkbcommon
         Threads::Threads
         OpenGL::GL
         ${X11_LIBRARIES}

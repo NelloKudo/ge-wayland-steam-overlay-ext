@@ -4,13 +4,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <unistd.h>
 
 #include <wayland-client.h>
 #include <wayland-cursor.h>
-#include <xkbcommon/xkbcommon-compose.h>
-#include <xkbcommon/xkbcommon.h>
 
 #include "fractional-scale-v1-client-protocol.h"
 #include "relative-pointer-unstable-v1-client-protocol.h"
@@ -39,11 +36,6 @@ struct ge_overlay_wayland_surface
     struct wl_cursor_theme *cursor_theme;
     struct wl_surface *overlay_cursor_surface;
     struct wl_subsurface *overlay_cursor_subsurface;
-    struct xkb_context *xkb_context;
-    struct xkb_keymap *xkb_keymap;
-    struct xkb_state *xkb_state;
-    struct xkb_compose_table *xkb_compose_table;
-    struct xkb_compose_state *xkb_compose_state;
     uint32_t seat_name;
     uint32_t subcompositor_name;
     uint32_t relative_pointer_manager_name;
@@ -66,6 +58,7 @@ struct ge_overlay_wayland_surface
 };
 
 static pthread_mutex_t input_surface_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t input_dispatch_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct ge_overlay_wayland_surface *process_input_surface;
 static pthread_mutex_t external_surface_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct ge_overlay_wayland_surface *external_input_surface;
@@ -344,117 +337,14 @@ void ge_overlay_wayland_set_overlay_active(int active)
 
 static void release_pressed_keys(struct ge_overlay_wayland_surface *surface);
 
-static void destroy_keyboard_state(struct ge_overlay_wayland_surface *surface)
-{
-    if (surface->xkb_compose_state)
-        xkb_compose_state_unref(surface->xkb_compose_state);
-    if (surface->xkb_compose_table)
-        xkb_compose_table_unref(surface->xkb_compose_table);
-    if (surface->xkb_state) xkb_state_unref(surface->xkb_state);
-    if (surface->xkb_keymap) xkb_keymap_unref(surface->xkb_keymap);
-    if (surface->xkb_context) xkb_context_unref(surface->xkb_context);
-
-    surface->xkb_compose_state = NULL;
-    surface->xkb_compose_table = NULL;
-    surface->xkb_state = NULL;
-    surface->xkb_keymap = NULL;
-    surface->xkb_context = NULL;
-}
-
-static const char *keyboard_locale(void)
-{
-    const char *locale;
-
-    if ((locale = getenv("LC_ALL")) && *locale) return locale;
-    if ((locale = getenv("LC_CTYPE")) && *locale) return locale;
-    if ((locale = getenv("LANG")) && *locale) return locale;
-    return "C";
-}
-
 static void keyboard_keymap(void *data, struct wl_keyboard *keyboard,
                             uint32_t format, int32_t fd, uint32_t size)
 {
-    struct ge_overlay_wayland_surface *surface = data;
-    struct xkb_compose_table *compose_table = NULL;
-    struct xkb_compose_state *compose_state = NULL;
-    struct xkb_context *context = NULL;
-    struct xkb_keymap *keymap = NULL;
-    struct xkb_state *state = NULL;
-    char *map;
-
+    (void)data;
     (void)keyboard;
-
-    if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 || !size) goto done;
-    if ((map = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0)) == MAP_FAILED)
-        goto done;
-
-    if (!(context = xkb_context_new(XKB_CONTEXT_NO_FLAGS))) goto unmap;
-    if (!(keymap = xkb_keymap_new_from_string(
-              context, map, XKB_KEYMAP_FORMAT_TEXT_V1,
-              XKB_KEYMAP_COMPILE_NO_FLAGS)))
-        goto unmap;
-    if (!(state = xkb_state_new(keymap))) goto unmap;
-
-    compose_table = xkb_compose_table_new_from_locale(
-        context, keyboard_locale(), XKB_COMPOSE_COMPILE_NO_FLAGS);
-    if (compose_table)
-        compose_state = xkb_compose_state_new(
-            compose_table, XKB_COMPOSE_STATE_NO_FLAGS);
-
-    destroy_keyboard_state(surface);
-    surface->xkb_context = context;
-    surface->xkb_keymap = keymap;
-    surface->xkb_state = state;
-    surface->xkb_compose_table = compose_table;
-    surface->xkb_compose_state = compose_state;
-    context = NULL;
-    keymap = NULL;
-    state = NULL;
-    compose_table = NULL;
-    compose_state = NULL;
-    overlay_trace("loaded Wayland keyboard map for overlay text input");
-
-unmap:
-    if (compose_state) xkb_compose_state_unref(compose_state);
-    if (compose_table) xkb_compose_table_unref(compose_table);
-    if (state) xkb_state_unref(state);
-    if (keymap) xkb_keymap_unref(keymap);
-    if (context) xkb_context_unref(context);
-    munmap(map, size);
-done:
+    (void)format;
+    (void)size;
     close(fd);
-}
-
-static uint32_t keyboard_get_utf32(struct ge_overlay_wayland_surface *surface,
-                                   uint32_t key)
-{
-    enum xkb_compose_status status;
-    xkb_keysym_t keysym;
-    uint32_t utf32;
-
-    if (!surface->xkb_state) return 0;
-
-    keysym = xkb_state_key_get_one_sym(surface->xkb_state, key + 8);
-    if (!surface->xkb_compose_state || keysym == XKB_KEY_NoSymbol)
-        return xkb_state_key_get_utf32(surface->xkb_state, key + 8);
-
-    xkb_compose_state_feed(surface->xkb_compose_state, keysym);
-    status = xkb_compose_state_get_status(surface->xkb_compose_state);
-    if (status == XKB_COMPOSE_COMPOSED)
-    {
-        utf32 = xkb_keysym_to_utf32(
-            xkb_compose_state_get_one_sym(surface->xkb_compose_state));
-        xkb_compose_state_reset(surface->xkb_compose_state);
-        return utf32;
-    }
-    if (status == XKB_COMPOSE_CANCELLED)
-    {
-        xkb_compose_state_reset(surface->xkb_compose_state);
-        return 0;
-    }
-    if (status == XKB_COMPOSE_COMPOSING) return 0;
-
-    return xkb_state_key_get_utf32(surface->xkb_state, key + 8);
 }
 
 static void keyboard_enter(void *data, struct wl_keyboard *keyboard,
@@ -482,7 +372,7 @@ static void keyboard_enter(void *data, struct wl_keyboard *keyboard,
     {
         if (*key >= sizeof(surface->keys) || surface->keys[*key]) continue;
         surface->keys[*key] = 1;
-        ge_overlay_bridge_filter_key(0, *key, 1, 0);
+        ge_overlay_bridge_filter_key(0, *key, 1);
     }
     update_bridge_focus(surface);
     overlay_trace("Wayland toplevel gained keyboard focus");
@@ -496,7 +386,7 @@ static void release_pressed_keys(struct ge_overlay_wayland_surface *surface)
     {
         if (!surface->keys[key]) continue;
         surface->keys[key] = 0;
-        ge_overlay_bridge_filter_key(0, key, 0, 0);
+        ge_overlay_bridge_filter_key(0, key, 0);
     }
 }
 
@@ -524,14 +414,12 @@ static void keyboard_key(void *data, struct wl_keyboard *keyboard,
 {
     struct ge_overlay_wayland_surface *surface = data;
     int pressed = state == WL_KEYBOARD_KEY_STATE_PRESSED;
-    uint32_t utf32 = 0;
 
     (void)keyboard;
     (void)serial;
     if (!surface->keyboard_focus) return;
     if (key < sizeof(surface->keys)) surface->keys[key] = pressed;
-    if (pressed) utf32 = keyboard_get_utf32(surface, key);
-    ge_overlay_bridge_filter_key(time, key, pressed, utf32);
+    ge_overlay_bridge_filter_key(time, key, pressed);
 }
 
 static void keyboard_modifiers(void *data, struct wl_keyboard *keyboard,
@@ -539,13 +427,13 @@ static void keyboard_modifiers(void *data, struct wl_keyboard *keyboard,
                                uint32_t latched, uint32_t locked,
                                uint32_t group)
 {
-    struct ge_overlay_wayland_surface *surface = data;
-
+    (void)data;
     (void)keyboard;
     (void)serial;
-    if (surface->xkb_state)
-        xkb_state_update_mask(surface->xkb_state, depressed, latched, locked,
-                              0, 0, group);
+    (void)depressed;
+    (void)latched;
+    (void)locked;
+    (void)group;
 }
 
 static void keyboard_repeat_info(void *data, struct wl_keyboard *keyboard,
@@ -836,7 +724,6 @@ static void destroy_seat_devices(struct ge_overlay_wayland_surface *surface)
         wl_seat_release(surface->seat);
         surface->seat = NULL;
     }
-    destroy_keyboard_state(surface);
     surface->seat_name = 0;
 }
 
@@ -856,7 +743,7 @@ static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps)
         surface->keyboard_focus = 0;
         wl_keyboard_release(surface->keyboard);
         surface->keyboard = NULL;
-        destroy_keyboard_state(surface);
+
     }
 
     if ((caps & WL_SEAT_CAPABILITY_POINTER) && !surface->pointer)
@@ -1064,8 +951,23 @@ fail:
 void ge_overlay_wayland_surface_dispatch(struct ge_overlay_wayland_surface *surface)
 {
     if (!surface || !surface->display || !surface->queue) return;
+
+    pthread_mutex_lock(&input_dispatch_mutex);
     if (wl_display_dispatch_queue_pending(surface->display, surface->queue) < 0)
         overlay_trace("failed to dispatch private Wayland input queue");
+    pthread_mutex_unlock(&input_dispatch_mutex);
+}
+
+struct ge_overlay_wayland_surface *ge_overlay_wayland_surface_ref(
+    struct ge_overlay_wayland_surface *surface)
+{
+    pthread_mutex_lock(&input_surface_mutex);
+    if (surface != process_input_surface || !surface->refs)
+        surface = NULL;
+    else
+        ++surface->refs;
+    pthread_mutex_unlock(&input_surface_mutex);
+    return surface;
 }
 
 void ge_overlay_wayland_surface_destroy(struct ge_overlay_wayland_surface *surface)

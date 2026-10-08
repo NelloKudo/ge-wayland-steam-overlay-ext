@@ -1,22 +1,23 @@
 /*
  * Early X11 focus proxy owned by the lsteamclient overlay bridge.
  *
- * win32u creates a host Vulkan instance before a Wine-Wayland process has a
- * presentation surface.  Use that instance creation to advertise the
- * steam_app_* target Steam Input expects.  Once the focused Wayland surface's
- * full bridge takes selection ownership this bootstrap proxy exits.
+ * Start from Vulkan instance creation so the steam_app_* target Steam Input
+ * expects exists before the application creates a presentation surface. Once
+ * the focused Wayland surface's full bridge takes selection ownership this
+ * bootstrap proxy exits.
  */
 
 #include "steam_overlay_bridge.h"
 #include "x11_focus.h"
 
 #include <dlfcn.h>
+#include <errno.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
 
 #include <X11/Xatom.h>
@@ -155,8 +156,10 @@ static int proxy_should_stop(void)
 
 static void *run_focus_proxy(void *arg)
 {
+    int (*select_input)(Display *, Window, long);
     struct direct_xlib xlib;
-    struct timespec sleep_time = {0, 50 * 1000 * 1000};
+    struct pollfd pollfd;
+    XEvent event;
     const char *display_name = getenv("DISPLAY");
     const char *appid = getenv("SteamAppId");
     char owner_selection[160];
@@ -182,6 +185,12 @@ static void *run_focus_proxy(void *arg)
 
     snprintf(window_class, sizeof(window_class), "steam_app_%s", appid);
     window = ge_overlay_create_x11_focus_window(display, window_class);
+    /* Watch for focus loss without Steam's Xlib wrappers, as for the
+     * window itself. */
+    select_input = (int (*)(Display *, Window, long))dlsym(
+        RTLD_NEXT, "XSelectInput");
+    if (window && select_input)
+        select_input(display, window, FocusChangeMask);
     if (!window)
     {
         xlib.close_display(display);
@@ -210,19 +219,42 @@ static void *run_focus_proxy(void *arg)
         fprintf(stderr, "steam-overlay-wayland: in-process focus proxy owns %#lx\n",
                 window);
 
+    pollfd.fd = ConnectionNumber(display);
+    pollfd.events = POLLIN;
     while (owns_selection && !proxy_should_stop())
     {
-        if (XGetSelectionOwner(display, owner_atom) != window) break;
+        int poll_result;
 
-        XGetInputFocus(display, &current_focus, &revert_to);
-        if (current_focus != window)
+        if (!XEventsQueued(display, QueuedAlready))
         {
+            pollfd.revents = 0;
+            poll_result = poll(&pollfd, 1, 50);
+            if (poll_result < 0)
+            {
+                if (errno == EINTR) continue;
+                break;
+            }
+            if (!poll_result) continue;
+            if (pollfd.revents & (POLLERR | POLLHUP | POLLNVAL)) break;
+        }
+
+        while (XPending(display))
+        {
+            XNextEvent(display, &event);
+            if (event.type == SelectionClear &&
+                event.xselectionclear.selection == owner_atom)
+                goto done;
+
+            if (event.type != FocusOut ||
+                XGetSelectionOwner(display, owner_atom) != window)
+                continue;
+
             XSetInputFocus(display, window, RevertToParent, CurrentTime);
             XFlush(display);
         }
-        nanosleep(&sleep_time, NULL);
     }
 
+done:
     if (XGetSelectionOwner(display, owner_atom) == window)
         XSetSelectionOwner(display, owner_atom, None, CurrentTime);
     XGetInputFocus(display, &current_focus, &revert_to);
