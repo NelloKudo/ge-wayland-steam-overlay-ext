@@ -1,0 +1,19 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build
+        run: |
+          docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e CCACHE_DISABLE=1 \
+            -v "$PWD:/src" -w /src \
+            registry.gitlab.steamos.cloud/proton/steamrt4/sdk/x86_64:4.0.20260714.251823-1 \
+            ./build.sh
