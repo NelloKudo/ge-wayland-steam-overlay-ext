@@ -9,18 +9,11 @@ include(GNUInstallDirs)
 
 find_package(Threads REQUIRED)
 
-set(LSTEAMCLIENT_OVERLAY_BRIDGE_SOURCE_DIR "" CACHE PATH
-    "Path to lsteamclient's native Steam overlay bridge")
-if(NOT EXISTS "${LSTEAMCLIENT_OVERLAY_BRIDGE_SOURCE_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR
-        "LSTEAMCLIENT_OVERLAY_BRIDGE_SOURCE_DIR must contain CMakeLists.txt")
-endif()
-
 # Install the bridge next to the layers, which find it through $ORIGIN.
 set(LAYER_SAVED_INSTALL_LIBDIR "${CMAKE_INSTALL_LIBDIR}")
 set(CMAKE_INSTALL_LIBDIR "${CMAKE_INSTALL_LIBDIR}/steam-overlay-wayland")
 add_subdirectory(
-    "${LSTEAMCLIENT_OVERLAY_BRIDGE_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../bridge"
     "${CMAKE_CURRENT_BINARY_DIR}/lsteamclient-overlay-bridge"
 )
 set(CMAKE_INSTALL_LIBDIR "${LAYER_SAVED_INSTALL_LIBDIR}")
@@ -45,32 +38,6 @@ set(FRONT_LAYER_NAME "VK_LAYER_GE_wayland_steam_overlay_front_${LAYER_ARCH}")
 set(BACK_LAYER_NAME "VK_LAYER_GE_wayland_steam_overlay_back_${LAYER_ARCH}")
 set(META_LAYER_NAME "VK_LAYER_GE_wayland_steam_overlay_${LAYER_ARCH}")
 set(STEAM_COMPONENT_LAYER_NAME "VK_LAYER_GE_steam_overlay_component_${LAYER_ARCH}")
-
-set(STEAM_OVERLAY_LIBRARY "" CACHE FILEPATH
-    "Path to Steam's steamoverlayvulkanlayer.so for this architecture")
-if(NOT STEAM_OVERLAY_LIBRARY)
-    find_file(STEAM_OVERLAY_LIBRARY_DETECTED
-        NAMES steamoverlayvulkanlayer.so
-        PATHS
-            "$ENV{HOME}/.local/share/Steam/ubuntu12_${LAYER_ARCH}"
-            "$ENV{HOME}/.steam/root/ubuntu12_${LAYER_ARCH}"
-            "$ENV{HOME}/.steam/steam/ubuntu12_${LAYER_ARCH}"
-            "$ENV{HOME}/.var/app/com.valvesoftware.Steam/data/Steam/ubuntu12_${LAYER_ARCH}"
-        NO_DEFAULT_PATH
-    )
-    if(STEAM_OVERLAY_LIBRARY_DETECTED)
-        set(STEAM_OVERLAY_LIBRARY "${STEAM_OVERLAY_LIBRARY_DETECTED}"
-            CACHE FILEPATH
-            "Path to Steam's steamoverlayvulkanlayer.so for this architecture"
-            FORCE)
-    endif()
-endif()
-if(NOT EXISTS "${STEAM_OVERLAY_LIBRARY}")
-    message(FATAL_ERROR
-        "STEAM_OVERLAY_LIBRARY must point to Steam's "
-        "steamoverlayvulkanlayer.so for this architecture")
-endif()
-get_filename_component(STEAM_OVERLAY_LIBRARY "${STEAM_OVERLAY_LIBRARY}" REALPATH)
 
 add_library(VkLayer_GE_Wayland_SteamOverlay_Front SHARED
     src/vulkan_layer.cpp
@@ -139,6 +106,12 @@ set_target_properties(
     LINK_OPTIONS "-Wl,-Bsymbolic"
 )
 
+# library_path in the manifests is relative to the manifest
+set(LAYER_MANIFEST_DIR "${CMAKE_INSTALL_DATADIR}/steam-overlay-wayland")
+file(RELATIVE_PATH LAYER_LIBRARY_DIR
+    "${CMAKE_INSTALL_PREFIX}/${LAYER_MANIFEST_DIR}/explicit_layer.d"
+    "${CMAKE_INSTALL_FULL_LIBDIR}/steam-overlay-wayland")
+
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/VkLayer_GE_wayland_steam_overlay.json.in
     ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_GE_wayland_steam_overlay_${LAYER_ARCH}.json
@@ -154,12 +127,6 @@ configure_file(
     ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_GE_wayland_steam_overlay_back_${LAYER_ARCH}.json
     @ONLY
 )
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/VkLayer_GE_steam_overlay_component.json.in
-    ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_GE_steam_overlay_component_${LAYER_ARCH}.json
-    @ONLY
-)
-
 install(TARGETS
     VkLayer_GE_Wayland_SteamOverlay_Front
     VkLayer_GE_Wayland_SteamOverlay_Back
@@ -167,11 +134,10 @@ install(TARGETS
 )
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_GE_wayland_steam_overlay_${LAYER_ARCH}.json
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/vulkan/implicit_layer.d
+    DESTINATION ${LAYER_MANIFEST_DIR}/implicit_layer.d
 )
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_GE_wayland_steam_overlay_front_${LAYER_ARCH}.json
     ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_GE_wayland_steam_overlay_back_${LAYER_ARCH}.json
-    ${CMAKE_CURRENT_BINARY_DIR}/VkLayer_GE_steam_overlay_component_${LAYER_ARCH}.json
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/vulkan/explicit_layer.d
+    DESTINATION ${LAYER_MANIFEST_DIR}/explicit_layer.d
 )

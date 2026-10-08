@@ -3,7 +3,7 @@
     "layer": {
         "name": "@BACK_LAYER_NAME@",
         "type": "INSTANCE",
-        "library_path": "@CMAKE_INSTALL_FULL_LIBDIR@/steam-overlay-wayland/libVkLayer_GE_Wayland_SteamOverlay_Back.so",
+        "library_path": "@LAYER_LIBRARY_DIR@/libVkLayer_GE_Wayland_SteamOverlay_Back.so",
         "library_arch": "@LAYER_ARCH@",
         "api_version": "1.3.0",
         "implementation_version": "1",
